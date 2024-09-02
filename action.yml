@@ -1,21 +1,69 @@
-name: "DDN Deployment"
-description: "Deploy to a Hasura DDN environment"
+name: "Hasura DDN Deployment"
+description: "Build and deploy subgraphs and supergraphs in Hasura DDN environment"
 branding:
   icon: package
-  color: white
+  color: purple
+
 inputs:
   hasura-pat:
     description: "Your PAT, preferably saved as a secret in your repository"
     required: true
+  command:
+    description: "Command to run (build-subgraph or build-supergraph)"
+    required: true
+  subgraph-name:
+    description: "Name of the subgraph to build (required for build-subgraph)"
+    required: false
+  subgraph-path:
+    description: "Path to the subgraph.yaml file (required for build-subgraph)"
+    required: false
+  subgraph-versions:
+    description: "Space-separated list of subgraph versions for supergraph build (e.g., 'subgraph1:version1 subgraph2:version2')"
+    required: false
+
+outputs:
+  build-version:
+    description: "The build version of the created subgraph (only for build-subgraph)"
+    value: ${{ steps.build-subgraph.outputs.build-version }}
+
 runs:
   using: "composite"
   steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
     - name: Install ddn CLI
       shell: bash
       run: |
         curl -L https://graphql-engine-cdn.hasura.io/ddn/cli/v4/get.sh | bash
+
     - name: Login to ddn
       shell: bash
       run: ddn auth login --pat ${{ inputs.hasura-pat }}
+
+    - name: Build Subgraph
+      if: inputs.command == 'build-subgraph'
+      id: build-subgraph
+      shell: bash
+      run: |
+        if [ -z "${{ inputs.subgraph-name }}" ] || [ -z "${{ inputs.subgraph-path }}" ]; then
+          echo "Error: subgraph-name and subgraph-path are required for build-subgraph command"
+          exit 1
+        fi
+        output=$(ddn subgraph build create --name "${{ inputs.subgraph-name }}" --file "${{ inputs.subgraph-path }}" --out json)
+        version=$(echo $output | jq -r '.SubgraphBuildVersion')
+        echo "build-version=$version" >> $GITHUB_OUTPUT
+
+    - name: Build Supergraph
+      if: inputs.command == 'build-supergraph'
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.subgraph-versions }}" ]; then
+          ddn supergraph build create --subgraph-version ${{ inputs.subgraph-versions }}
+        else
+          ddn supergraph build create
+        fi
+
+    - name: Command not recognized
+      if: inputs.command != 'build-subgraph' && inputs.command != 'build-supergraph'
+      shell: bash
+      run: |
+        echo "Error: Unrecognized command. Use 'build-subgraph' or 'build-supergraph'."
+        exit 1
